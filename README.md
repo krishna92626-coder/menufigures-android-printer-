@@ -1,28 +1,48 @@
-# MenuFigures Android Printer Companion — starter source
+# llMenu Android App — inbuilt Bluetooth printer bridge
 
-Android Studio project for an initial Bluetooth Classic (SPP) + ESC/POS prototype.
+This branch packages the existing llMenu Light Pulse web app inside one Android APK and embeds the Bluetooth Classic SPP / ESC/POS bridge directly in that APK. The user does not need to install a separate MenuFigures Printer companion app.
 
-## Included
-- Android app shell
-- Lists already-paired Bluetooth devices
-- Attempts Bluetooth Classic RFCOMM/SPP connection
-- ESC/POS text receipt + test receipt
-- 58mm / 80mm width selection
-- 1–3 copies
-- Receives MenuFigures print intents using `menufigures://print?paper=58&copies=1&text=URL_ENCODED_TEXT`
+## App identity
 
-## Download the APK
-The GitHub Actions workflow builds the APK on every push to `main` and when manually started.
+- Android application ID: `com.llmenu.app`
+- App label: `llMenu`
+- Hosted app: `https://llmenu-light-pulse.apper.so`
+- Minimum Android: API 23
+- Target Android: API 35
+- Native bridge: `window.LlMenuPrinter`
 
-- **Direct APK download:** open the repository's [Releases](https://github.com/krishna92626-coder/menufigures-android-printer-/releases/latest) page and download `app-debug.apk` from the latest `MenuFigures Printer APK build` release.
-- **Build artifact:** open [Actions](https://github.com/krishna92626-coder/menufigures-android-printer-/actions), select the latest successful **Build Android APK** run, then download `menufigures-debug-apk`.
+## Included native capabilities
 
-The Releases download is the easiest option on Android because it downloads the APK file directly instead of an API response or an artifact ZIP.
+- Lists already-paired Bluetooth devices.
+- Connects to Bluetooth Classic RFCOMM/SPP printers.
+- Sends ESC/POS data over the connected socket.
+- Uses Android 12+ Nearby devices permission.
+- Restricts the injected JavaScript bridge to the exact llMenu HTTPS origin.
+- Rejects WebView navigation outside the trusted llMenu host.
+- Closes the Bluetooth socket when the app is destroyed.
 
-## Important limits — not production-certified
-- EZO is a brand, not a guaranteed protocol. This prototype assumes Bluetooth Classic SPP and ESC/POS. Some EZO models may use BLE or proprietary protocols.
-- Pair the printer in Android Settings first; the app only lists bonded devices.
-- Android 12+ requires Nearby devices permission.
-- This source has not yet been compiled or tested on a physical EZO printer. A successful socket write does not prove that paper actually printed.
-- UTF-8 text support varies by printer firmware/code page. Hindi and other non-Latin text may need raster/bitmap rendering.
-- Production work still required: reliable persisted printer choice, retry/reconnect, permission UX, bitmap receipt rendering, status/error handling, security validation of inbound print intents, and physical tests across printer models.
+## Web app integration
+
+The Apper project contains the matching `src/lib/printerBridge.js` client. It sends bridge requests for:
+
+- `getPairedPrinters`
+- `connect`
+- `printEscPos`
+- `disconnect`
+
+Receipts and kitchen tickets are rasterised in the WebView and sent as ESC/POS raster data. This allows Android's available fonts to render Devanagari text as an image instead of relying on the printer's text code page.
+
+## Build and download
+
+GitHub Actions builds a signed release APK on pushes to `llmenu-inbuilt-printing` and `main`.
+
+- Latest llMenu APK: open the [llMenu releases](https://github.com/krishna92626-coder/menufigures-android-printer-/releases) page and download `app-release.apk` from the latest `llmenu-release-*` release.
+- Build workflow: [GitHub Actions](https://github.com/krishna92626-coder/menufigures-android-printer-/actions).
+
+The release workflow verifies the APK signature before publishing it.
+
+## Physical printer validation still required
+
+The APK build and signature are verified by CI, but a successful build does not prove that a particular thermal printer works. Pair the printer in Android Settings, connect it from llMenu → Settings → Printer, and use Test print. Validate actual paper output, alignment, paper width, Devanagari rendering, and reconnect behavior on the target printer model before production use.
+
+Some printer models use BLE or proprietary protocols instead of Bluetooth Classic SPP. This bridge currently targets Bluetooth Classic SPP with ESC/POS.
