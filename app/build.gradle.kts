@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.menufigures.printer"
         minSdk = 23
-        targetSdk = 32
+        targetSdk = 35
         versionCode = 4
         versionName = "0.3.0"
     }
