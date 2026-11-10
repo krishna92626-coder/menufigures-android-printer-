@@ -2,125 +2,244 @@ package com.menufigures.printer
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothSocket
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.widget.*
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
-import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
+    companion object {
+        private const val DEFAULT_APP_URL = "https://preview--menufigures.apper.so"
+        private const val BLUETOOTH_PERMISSION_REQUEST = 41
+    }
+
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-    private var paired: List<BluetoothDevice> = emptyList()
+    private lateinit var webView: WebView
+    private lateinit var urlInput: EditText
     private lateinit var status: TextView
-    private lateinit var devices: Spinner
-    private lateinit var paper: Spinner
-    private lateinit var copies: Spinner
+    private var trustedHost = Uri.parse(DEFAULT_APP_URL).host.orEmpty()
+    private var printerSocket: BluetoothSocket? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        makeUi()
-        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            status.text = "Allow Nearby devices permission to find and connect to your printer"
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 41)
-        } else {
-            loadPaired()
+        requestBluetoothPermissionIfNeeded()
+        buildAppShell()
+        openMenuFigures(DEFAULT_APP_URL)
+    }
+
+    private fun requestBluetoothPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                BLUETOOTH_PERMISSION_REQUEST
+            )
         }
-        handleIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleIntent(intent)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 41) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                loadPaired()
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
+            status.text = if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                "Nearby devices permission granted. Pair your printer in Android Bluetooth settings."
             } else {
-                status.text = "Nearby devices permission denied — allow it in App settings, then refresh"
+                "Nearby devices permission is required for Bluetooth printing."
             }
         }
     }
 
-    private fun makeUi() {
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 32, 28, 24) }
-        root.addView(TextView(this).apply { text = "MenuFigures Printer"; textSize = 24f })
-        root.addView(TextView(this).apply { text = "Pair your EZO / ESC-POS printer in Android Bluetooth settings first."; textSize = 14f })
-        status = TextView(this).apply { text = "Loading paired printers…"; textSize = 14f }
+    private fun buildAppShell() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 8)
+        }
+
+        root.addView(TextView(this).apply {
+            text = "MenuFigures Printer"
+            textSize = 21f
+        })
+
+        status = TextView(this).apply {
+            text = "Opening MenuFigures…"
+            textSize = 12f
+            setPadding(0, 6, 0, 8)
+        }
         root.addView(status)
-        devices = Spinner(this); root.addView(devices)
-        root.addView(TextView(this).apply { text = "Paper width" })
-        paper = Spinner(this).apply { adapter = arrayAdapter(listOf("58mm", "80mm")) }; root.addView(paper)
-        root.addView(TextView(this).apply { text = "Copies" })
-        copies = Spinner(this).apply { adapter = arrayAdapter(listOf("1", "2", "3")) }; root.addView(copies)
-        root.addView(Button(this).apply { text = "Refresh paired printers"; setOnClickListener { loadPaired() } })
-        root.addView(Button(this).apply { text = "Print test receipt"; setOnClickListener { printToSelected(testReceipt()) } })
+
+        val urlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        urlInput = EditText(this).apply {
+            singleLine = true
+            textSize = 12f
+            setText(DEFAULT_APP_URL)
+        }
+        urlRow.addView(urlInput, LinearLayout.LayoutParams(0, 48, 1f))
+        urlRow.addView(Button(this).apply {
+            text = "Open"
+            setOnClickListener { openMenuFigures(urlInput.text.toString().trim()) }
+        })
+        root.addView(urlRow)
+
+        webView = WebView(this)
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.settings.allowFileAccess = false
+        webView.settings.allowContentAccess = false
+        webView.settings.javaScriptCanOpenWindowsAutomatically = false
+        webView.webChromeClient = WebChromeClient()
+        webView.addJavascriptInterface(PrinterJavascriptBridge(), "MenuFiguresPrinter")
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val uri = request.url
+                if (uri.scheme == "https" && uri.host == trustedHost) return false
+                status.text = "Blocked navigation outside the selected MenuFigures website."
+                return true
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                status.text = "Connecting to MenuFigures…"
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                status.text = "MenuFigures connected. Pair a Bluetooth printer in Android settings, then open Settings → Printers."
+            }
+        }
+
+        root.addView(webView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ))
         setContentView(root)
     }
 
-    private fun arrayAdapter(items: List<String>) = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
-
-    private fun loadPaired() {
-        try {
-            val adapter = BluetoothAdapter.getDefaultAdapter()
-            if (adapter == null) { status.text = "Bluetooth is not available on this device"; return }
-            paired = adapter.bondedDevices?.sortedBy { it.name ?: it.address }?.toList() ?: emptyList()
-            val labels = if (paired.isEmpty()) listOf("No paired devices — pair printer in Android Settings") else paired.map { "${it.name ?: "Bluetooth printer"} (${it.address})" }
-            devices.adapter = arrayAdapter(labels)
-            status.text = "${paired.size} paired device(s) found"
-        } catch (_: SecurityException) { status.text = "Allow Nearby devices permission, then refresh" }
-    }
-
-    private fun handleIntent(intent: Intent?) {
-        val uri: Uri = intent?.data ?: return
-        if (uri.scheme != "menufigures" || uri.host != "print") return
-        val receipt = uri.getQueryParameter("text") ?: return
-        val is80 = uri.getQueryParameter("paper") == "80"
-        val count = (uri.getQueryParameter("copies")?.toIntOrNull() ?: 1).coerceIn(1, 3)
-        printToSelected(escPosText(receipt, is80), count)
-    }
-
-    private fun testReceipt(): ByteArray {
-        val is80 = paper.selectedItemPosition == 1
-        return escPosText("MENUFIGURES\nBluetooth test receipt\nPaper: ${if (is80) "80mm" else "58mm"}\n------------------------------\nTEST PRINT\n\n", is80)
-    }
-
-    private fun escPosText(text: String, is80: Boolean): ByteArray {
-        val maxChars = if (is80) 48 else 32
-        val wrapped = text.lines().joinToString("\n") { line -> if (line.length <= maxChars) line else line.chunked(maxChars).joinToString("\n") } + "\n\n"
-        return byteArrayOf(0x1B, 0x40) + wrapped.toByteArray(Charsets.UTF_8) + byteArrayOf(0x0A, 0x0A)
-    }
-
-    private fun printToSelected(data: ByteArray, requestedCopies: Int = 1) {
-        val device = paired.getOrNull(devices.selectedItemPosition)
-        if (device == null) { status.text = "Select a paired printer first"; return }
-        val count = if (requestedCopies > 1) requestedCopies else (copies.selectedItem?.toString()?.toIntOrNull() ?: 1)
-        status.text = "Connecting to ${device.name ?: device.address}…"
-        thread {
-            var socket: BluetoothSocket? = null
-            try {
-                val connectedSocket = device.createRfcommSocketToServiceRecord(spp)
-                socket = connectedSocket
-                connectedSocket.connect()
-                repeat(count.coerceIn(1, 3)) {
-                    connectedSocket.outputStream.write(data)
-                    connectedSocket.outputStream.flush()
-                }
-                connectedSocket.outputStream.write(byteArrayOf(0x1D, 0x56, 0x00))
-                connectedSocket.outputStream.flush()
-                runOnUiThread { status.text = "Print data sent" }
-            } catch (e: Exception) {
-                runOnUiThread { status.text = "Print failed: ${e.message ?: "check printer protocol"}" }
-            } finally { try { socket?.close() } catch (_: Exception) {} }
+    private fun openMenuFigures(rawUrl: String) {
+        val normalized = if (rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
+        val uri = runCatching { Uri.parse(normalized) }.getOrNull()
+        if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank()) {
+            status.text = "Enter a valid HTTPS MenuFigures website address."
+            return
         }
+        trustedHost = uri.host!!
+        urlInput.setText(uri.toString())
+        webView.loadUrl(uri.toString())
+    }
+
+    private fun bridgeCallAllowed(): Boolean {
+        val currentHost = runCatching { Uri.parse(webView.url).host }.getOrNull()
+        return currentHost == trustedHost && trustedHost.isNotBlank()
+    }
+
+    private fun bluetoothAdapter(): BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+
+    private fun hasBluetoothPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun jsonError(message: String): String =
+        JSONObject().put("ok", false).put("error", message).toString()
+
+    inner class PrinterJavascriptBridge {
+        @JavascriptInterface
+        fun getPairedPrinters(): String {
+            if (!bridgeCallAllowed()) return jsonError("Printer bridge is only available on the selected MenuFigures website.")
+            if (!hasBluetoothPermission()) return jsonError("Allow Nearby devices permission in Android settings.")
+            return try {
+                val adapter = bluetoothAdapter() ?: return jsonError("Bluetooth is not available on this device.")
+                if (!adapter.isEnabled) return jsonError("Turn on Bluetooth, then refresh paired printers.")
+                val list = JSONArray()
+                adapter.bondedDevices.orEmpty()
+                    .sortedBy { it.name ?: it.address }
+                    .forEach { device ->
+                        list.put(JSONObject().put("name", device.name ?: "Bluetooth printer").put("address", device.address))
+                    }
+                JSONObject().put("ok", true).put("printers", list).toString()
+            } catch (error: SecurityException) {
+                jsonError("Nearby devices permission is required to list paired printers.")
+            } catch (error: Exception) {
+                jsonError(error.message ?: "Could not read paired printers.")
+            }
+        }
+
+        @JavascriptInterface
+        fun connect(address: String): String {
+            if (!bridgeCallAllowed()) return jsonError("Printer bridge is only available on the selected MenuFigures website.")
+            if (!hasBluetoothPermission()) return jsonError("Allow Nearby devices permission in Android settings.")
+            return try {
+                val adapter = bluetoothAdapter() ?: return jsonError("Bluetooth is not available.")
+                val device: BluetoothDevice = adapter.bondedDevices.firstOrNull { it.address == address }
+                    ?: return jsonError("Pair this printer in Android Bluetooth settings first.")
+                synchronized(this@MainActivity) {
+                    runCatching { printerSocket?.close() }
+                    printerSocket = null
+                    val socket = device.createRfcommSocketToServiceRecord(spp)
+                    socket.connect()
+                    printerSocket = socket
+                }
+                JSONObject().put("ok", true).put("name", device.name ?: "Bluetooth printer").toString()
+            } catch (error: Exception) {
+                runCatching { printerSocket?.close() }
+                printerSocket = null
+                jsonError(error.message ?: "Could not connect to the Bluetooth printer. Check that it supports Bluetooth Classic SPP.")
+            }
+        }
+
+        @JavascriptInterface
+        fun printEscPos(base64: String): String {
+            if (!bridgeCallAllowed()) return jsonError("Printer bridge is only available on the selected MenuFigures website.")
+            return try {
+                val data = Base64.decode(base64, Base64.DEFAULT)
+                if (data.isEmpty()) return jsonError("Receipt data is empty.")
+                synchronized(this@MainActivity) {
+                    val socket = printerSocket ?: return jsonError("Connect to a paired printer before printing.")
+                    socket.outputStream.write(data)
+                    socket.outputStream.flush()
+                }
+                JSONObject().put("ok", true).put("bytesSent", data.size).toString()
+            } catch (error: Exception) {
+                jsonError(error.message ?: "Could not send receipt data to the printer.")
+            }
+        }
+
+        @JavascriptInterface
+        fun disconnect(): String {
+            synchronized(this@MainActivity) {
+                runCatching { printerSocket?.close() }
+                printerSocket = null
+            }
+            return JSONObject().put("ok", true).toString()
+        }
+    }
+
+    override fun onDestroy() {
+        synchronized(this) {
+            runCatching { printerSocket?.close() }
+            printerSocket = null
+        }
+        webView.stopLoading()
+        webView.destroy()
+        super.onDestroy()
     }
 }
