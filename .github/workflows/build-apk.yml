@@ -1,9 +1,9 @@
-name: Build Android APK
+name: Build llMenu Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, llmenu-inbuilt-printing]
 
 permissions:
   contents: write
@@ -59,7 +59,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: menufigures-release-apk
+          name: llmenu-release-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
@@ -68,8 +68,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="printer-release-${GITHUB_RUN_NUMBER}"
+          TAG="llmenu-release-${GITHUB_RUN_NUMBER}"
           gh release create "$TAG" app/build/outputs/apk/release/app-release.apk \
             --target "$GITHUB_SHA" \
-            --title "MenuFigures signed release ${GITHUB_RUN_NUMBER}" \
-            --notes "Signed release APK for MenuFigures. Built from commit ${GITHUB_SHA}. Bluetooth printer compatibility still requires a physical printer test."
+            --title "llMenu Android APK ${GITHUB_RUN_NUMBER}" \
+            --notes "llMenu Android app with an inbuilt Bluetooth Classic SPP / ESC-POS bridge. Physical printer compatibility must be verified before production use."
