@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+dependencies {
+    implementation("androidx.webkit:webkit:1.15.0")
+}
+
 android {
     namespace = "com.menufigures.printer"
     compileSdk = 35
@@ -11,8 +15,8 @@ android {
         applicationId = "com.menufigures.printer"
         minSdk = 23
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.4.0"
     }
 
     signingConfigs {
