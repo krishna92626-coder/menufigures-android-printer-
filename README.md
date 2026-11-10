@@ -11,8 +11,13 @@ Android Studio project for an initial Bluetooth Classic (SPP) + ESC/POS prototyp
 - 1–3 copies
 - Receives MenuFigures print intents using `menufigures://print?paper=58&copies=1&text=URL_ENCODED_TEXT`
 
-## Build APK
-GitHub Actions builds a debug APK on every push and when manually started. Open the **Actions** tab, choose **Build Android APK**, and download the `menufigures-debug-apk` artifact after the workflow succeeds. You can also open this project in Android Studio and choose **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
+## Download the APK
+The GitHub Actions workflow builds the APK on every push to `main` and when manually started.
+
+- **Direct APK download:** open the repository's [Releases](https://github.com/krishna92626-coder/menufigures-android-printer-/releases/latest) page and download `app-debug.apk` from the latest `MenuFigures Printer APK build` release.
+- **Build artifact:** open [Actions](https://github.com/krishna92626-coder/menufigures-android-printer-/actions), select the latest successful **Build Android APK** run, then download `menufigures-debug-apk`.
+
+The Releases download is the easiest option on Android because it downloads the APK file directly instead of an API response or an artifact ZIP.
 
 ## Important limits — not production-certified
 - EZO is a brand, not a guaranteed protocol. This prototype assumes Bluetooth Classic SPP and ESC/POS. Some EZO models may use BLE or proprietary protocols.
