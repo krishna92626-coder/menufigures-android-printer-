@@ -95,11 +95,15 @@ class MainActivity : Activity() {
         thread {
             var socket: BluetoothSocket? = null
             try {
-                socket = device.createRfcommSocketToServiceRecord(spp)
-                socket.connect()
-                repeat(count.coerceIn(1, 3)) { socket.outputStream.write(data); socket.outputStream.flush() }
-                socket.outputStream.write(byteArrayOf(0x1D, 0x56, 0x00))
-                socket.outputStream.flush()
+                val connectedSocket = device.createRfcommSocketToServiceRecord(spp)
+                socket = connectedSocket
+                connectedSocket.connect()
+                repeat(count.coerceIn(1, 3)) {
+                    connectedSocket.outputStream.write(data)
+                    connectedSocket.outputStream.flush()
+                }
+                connectedSocket.outputStream.write(byteArrayOf(0x1D, 0x56, 0x00))
+                connectedSocket.outputStream.flush()
                 runOnUiThread { status.text = "Print data sent" }
             } catch (e: Exception) {
                 runOnUiThread { status.text = "Print failed: ${e.message ?: "check printer protocol"}" }
