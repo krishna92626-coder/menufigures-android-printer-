@@ -3,6 +3,7 @@ package com.menufigures.printer
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
@@ -172,13 +173,22 @@ class MainActivity : Activity() {
         if (!adapter.isEnabled) return resultError("Turn on Bluetooth, then refresh paired printers.")
 
         val printers = JSONArray()
-        adapter.bondedDevices.orEmpty().sortedBy { it.name ?: it.address }.forEach { device ->
-            printers.put(
-                JSONObject()
-                    .put("name", device.name ?: "Bluetooth printer")
-                    .put("address", device.address)
-            )
-        }
+        val audioDeviceNames = Regex("headphone|headset|earbud|airpod|speaker|soundbar", RegexOption.IGNORE_CASE)
+        adapter.bondedDevices.orEmpty()
+            .filter { device ->
+                val majorClass = runCatching { device.bluetoothClass?.majorDeviceClass }.getOrNull()
+                val isAudioDevice = majorClass == BluetoothClass.Device.Major.AUDIO_VIDEO ||
+                    audioDeviceNames.containsMatchIn(device.name.orEmpty())
+                !isAudioDevice
+            }
+            .sortedBy { it.name ?: it.address }
+            .forEach { device ->
+                printers.put(
+                    JSONObject()
+                        .put("name", device.name ?: "Bluetooth device")
+                        .put("address", device.address)
+                )
+            }
         return JSONObject().put("ok", true).put("printers", printers)
     }
 

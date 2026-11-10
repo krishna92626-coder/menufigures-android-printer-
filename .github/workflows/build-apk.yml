@@ -71,5 +71,5 @@ jobs:
           TAG="printer-release-${GITHUB_RUN_NUMBER}"
           gh release create "$TAG" app/build/outputs/apk/release/app-release.apk \
             --target "$GITHUB_SHA" \
-            --title "MenuFigures Printer signed release ${GITHUB_RUN_NUMBER}" \
-            --notes "Signed release APK for MenuFigures Printer. Built from commit ${GITHUB_SHA}. Bluetooth printer compatibility still requires a physical printer test."
+            --title "MenuFigures signed release ${GITHUB_RUN_NUMBER}" \
+            --notes "Signed release APK for MenuFigures. Built from commit ${GITHUB_SHA}. Bluetooth printer compatibility still requires a physical printer test."
