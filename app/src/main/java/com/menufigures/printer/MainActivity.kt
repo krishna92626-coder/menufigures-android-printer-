@@ -24,11 +24,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 41)
-        }
         makeUi()
-        loadPaired()
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            status.text = "Allow Nearby devices permission to find and connect to your printer"
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 41)
+        } else {
+            loadPaired()
+        }
         handleIntent(intent)
     }
 
@@ -36,6 +38,17 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 41) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                loadPaired()
+            } else {
+                status.text = "Nearby devices permission denied — allow it in App settings, then refresh"
+            }
+        }
     }
 
     private fun makeUi() {
