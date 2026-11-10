@@ -15,10 +15,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONArray
@@ -28,7 +25,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     companion object {
-        private const val DEFAULT_APP_URL = "https://preview--menufigures.apper.so"
+        private const val APP_URL = "https://preview--menufigures.apper.so"
         private const val TRUSTED_HOST = "preview--menufigures.apper.so"
         private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
@@ -38,76 +35,15 @@ class MainActivity : Activity() {
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private val bridgeExecutor = Executors.newSingleThreadExecutor()
     private lateinit var webView: WebView
-    private lateinit var urlInput: EditText
-    private lateinit var status: TextView
-    private var bridgeReady = false
     private var printerSocket: BluetoothSocket? = null
+    private var bridgeReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        buildAppShell()
-        requestBluetoothPermissionIfNeeded()
-        openMenuFigures(DEFAULT_APP_URL)
-    }
-
-    private fun requestBluetoothPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(
-                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
-                BLUETOOTH_PERMISSION_REQUEST
-            )
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
-            status.text = if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                "Nearby devices permission granted. Open Settings → Printers to find paired printers."
-            } else {
-                "Allow Nearby devices permission to list and connect Bluetooth printers."
-            }
-        }
-    }
-
-    private fun buildAppShell() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 16, 16, 8)
-        }
-
-        root.addView(TextView(this).apply {
-            text = "MenuFigures Printer"
-            textSize = 21f
-        })
-
-        status = TextView(this).apply {
-            text = "Opening MenuFigures…"
-            textSize = 12f
-            setPadding(0, 6, 0, 8)
-        }
-        root.addView(status)
-
-        val urlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        urlInput = EditText(this).apply {
-            setSingleLine(true)
-            textSize = 12f
-            setText(DEFAULT_APP_URL)
-            isEnabled = false
-            isFocusable = false
-        }
-        urlRow.addView(urlInput, LinearLayout.LayoutParams(0, 48, 1f))
-        urlRow.addView(Button(this).apply {
-            text = "Reload"
-            setOnClickListener { openMenuFigures(DEFAULT_APP_URL) }
-        })
-        root.addView(urlRow)
+        window.statusBarColor = android.graphics.Color.WHITE
+        window.navigationBarColor = android.graphics.Color.WHITE
+        window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+            android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
         webView = WebView(this)
         webView.settings.javaScriptEnabled = true
@@ -118,56 +54,61 @@ class MainActivity : Activity() {
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         webView.webChromeClient = WebChromeClient()
         bridgeReady = installSecurePrinterBridge()
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (isTrustedUrl(request.url)) return false
-                status.text = "Blocked navigation outside the approved MenuFigures website."
-                return true
+                return !isTrustedUrl(request.url)
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri == null || !isTrustedUrl(uri)) {
-                    status.text = "Only the approved MenuFigures website can open in this printer app."
-                    view.stopLoading()
-                    return
-                }
-                status.text = "Connecting to MenuFigures…"
-            }
-
-            override fun onPageFinished(view: WebView, url: String?) {
-                val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri != null && isTrustedUrl(uri)) {
-                    status.text = if (bridgeReady) {
-                        "MenuFigures connected. Bluetooth printer bridge is ready. Open Settings → Printers."
-                    } else {
-                        "MenuFigures opened, but this Android System WebView does not support the secure printer bridge. Update Android System WebView."
-                    }
-                }
+                if (uri == null || !isTrustedUrl(uri)) view.stopLoading()
             }
         }
 
-        root.addView(webView, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            0,
-            1f
-        ))
-        setContentView(root)
+        setContentView(webView)
+        requestBluetoothPermissionIfNeeded()
+        webView.loadUrl(APP_URL)
+    }
+
+    private fun requestBluetoothPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), BLUETOOTH_PERMISSION_REQUEST)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            Toast.makeText(
+                this,
+                if (granted) "Bluetooth access enabled. Open Settings → Printers."
+                else "Allow Nearby devices permission to use a Bluetooth printer.",
+                Toast.LENGTH_LONG
+            ).show()
+            if (granted && ::webView.isInitialized) {
+                webView.post { webView.reload() }
+            }
+        }
     }
 
     private fun installSecurePrinterBridge(): Boolean {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            return false
-        }
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
 
         WebViewCompat.addWebMessageListener(
             webView,
             "MenuFiguresPrinter",
             setOf(TRUSTED_ORIGIN)
         ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
-            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) {
-                return@addWebMessageListener
-            }
+            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
 
             val payload = message.data
             bridgeExecutor.execute {
@@ -182,46 +123,30 @@ class MainActivity : Activity() {
         return true
     }
 
-    private fun isTrustedOrigin(uri: Uri): Boolean {
-        return uri.scheme.equals("https", ignoreCase = true) &&
+    private fun isTrustedOrigin(uri: Uri): Boolean =
+        uri.scheme.equals("https", ignoreCase = true) &&
             uri.host.equals(TRUSTED_HOST, ignoreCase = true) &&
             (uri.port == -1 || uri.port == 443) &&
             uri.userInfo == null
-    }
 
-    private fun isTrustedUrl(uri: Uri): Boolean =
-        isTrustedOrigin(uri) && (uri.port == -1 || uri.port == 443)
+    private fun isTrustedUrl(uri: Uri): Boolean = isTrustedOrigin(uri)
 
-    private fun openMenuFigures(rawUrl: String) {
-        val uri = runCatching { Uri.parse(rawUrl) }.getOrNull()
-        if (uri == null || !isTrustedUrl(uri)) {
-            status.text = "This app can open only the approved MenuFigures HTTPS website."
-            urlInput.setText(DEFAULT_APP_URL)
-            return
-        }
-        urlInput.setText(DEFAULT_APP_URL)
-        webView.loadUrl(DEFAULT_APP_URL)
-    }
-
-    private fun hasBluetoothPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+    private fun hasBluetoothPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-    }
 
-    private fun bluetoothAdapter(): BluetoothAdapter? {
-        val manager = getSystemService(BluetoothManager::class.java)
-        return manager?.adapter
-    }
+    private fun bluetoothAdapter(): BluetoothAdapter? =
+        getSystemService(BluetoothManager::class.java)?.adapter
 
     private fun resultError(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)
 
     private fun handleBridgeMessage(payload: String): String {
         val request = runCatching { JSONObject(payload) }.getOrNull()
-            ?: return JSONObject()
-                .put("id", "")
-                .put("result", resultError("The printer request was not valid JSON."))
-                .toString()
+            ?: return JSONObject().put("id", "").put(
+                "result",
+                resultError("The printer request was not valid JSON.")
+            ).toString()
 
         val id = request.optString("id")
         val args = request.optJSONObject("args") ?: JSONObject()
@@ -238,21 +163,16 @@ class MainActivity : Activity() {
         } catch (error: Exception) {
             resultError(error.message ?: "The Bluetooth printer operation failed.")
         }
-
         return JSONObject().put("id", id).put("result", result).toString()
     }
 
     private fun getPairedPrinters(): JSONObject {
-        if (!hasBluetoothPermission()) {
-            return resultError("Allow Nearby devices permission in Android settings.")
-        }
+        if (!hasBluetoothPermission()) return resultError("Allow Nearby devices permission in Android settings.")
         val adapter = bluetoothAdapter() ?: return resultError("Bluetooth is not available on this device.")
         if (!adapter.isEnabled) return resultError("Turn on Bluetooth, then refresh paired printers.")
 
-        val devices = adapter.bondedDevices.orEmpty()
-            .sortedBy { it.name ?: it.address }
         val printers = JSONArray()
-        devices.forEach { device ->
+        adapter.bondedDevices.orEmpty().sortedBy { it.name ?: it.address }.forEach { device ->
             printers.put(
                 JSONObject()
                     .put("name", device.name ?: "Bluetooth printer")
@@ -263,9 +183,7 @@ class MainActivity : Activity() {
     }
 
     private fun connectPrinter(address: String): JSONObject {
-        if (!hasBluetoothPermission()) {
-            return resultError("Allow Nearby devices permission in Android settings.")
-        }
+        if (!hasBluetoothPermission()) return resultError("Allow Nearby devices permission in Android settings.")
         if (address.isBlank()) return resultError("Choose a paired Bluetooth printer first.")
 
         val adapter = bluetoothAdapter() ?: return resultError("Bluetooth is not available.")
@@ -277,8 +195,8 @@ class MainActivity : Activity() {
             runCatching { printerSocket?.close() }
             printerSocket = null
         }
-
         adapter.cancelDiscovery()
+
         val socket = device.createRfcommSocketToServiceRecord(spp)
         try {
             socket.connect()
@@ -291,9 +209,7 @@ class MainActivity : Activity() {
     }
 
     private fun printEscPos(base64: String): JSONObject {
-        if (!hasBluetoothPermission()) {
-            return resultError("Allow Nearby devices permission in Android settings.")
-        }
+        if (!hasBluetoothPermission()) return resultError("Allow Nearby devices permission in Android settings.")
         if (base64.isBlank()) return resultError("Receipt data is empty.")
         if (base64.length > 3_000_000) return resultError("The receipt is too large to send.")
 
@@ -318,11 +234,19 @@ class MainActivity : Activity() {
         return JSONObject().put("ok", true)
     }
 
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
+        else super.onBackPressed()
+    }
+
     override fun onDestroy() {
+        if (::webView.isInitialized) {
+            webView.stopLoading()
+            webView.destroy()
+        }
         disconnectPrinter()
         bridgeExecutor.shutdownNow()
-        webView.stopLoading()
-        webView.destroy()
         super.onDestroy()
     }
 }
