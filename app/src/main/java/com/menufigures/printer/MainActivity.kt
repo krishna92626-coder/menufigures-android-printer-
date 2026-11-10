@@ -90,7 +90,7 @@ class MainActivity : Activity() {
 
         val urlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         urlInput = EditText(this).apply {
-            singleLine = true
+            setSingleLine(true)
             textSize = 12f
             setText(DEFAULT_APP_URL)
         }
