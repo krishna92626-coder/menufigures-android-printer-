@@ -1,4 +1,4 @@
-package com.menufigures.printer
+package com.llmenu.app
 
 import android.Manifest
 import android.app.Activity
@@ -26,9 +26,9 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     companion object {
-        private const val APP_URL = "https://preview--menufigures.apper.so"
-        private const val TRUSTED_HOST = "preview--menufigures.apper.so"
-        private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
+        private const val APP_URL = "https://llmenu-light-pulse.apper.so"
+        private const val TRUSTED_HOST = "llmenu-light-pulse.apper.so"
+        private const val TRUSTED_ORIGIN = "https://llmenu-light-pulse.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
     }
@@ -37,13 +37,12 @@ class MainActivity : Activity() {
     private val bridgeExecutor = Executors.newSingleThreadExecutor()
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
-    private var bridgeReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.WHITE
+        window.statusBarColor = android.graphics.Color.rgb(43, 100, 243)
         window.navigationBarColor = android.graphics.Color.WHITE
-        window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+        window.decorView.systemUiVisibility =
             android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
         webView = WebView(this)
@@ -54,7 +53,6 @@ class MainActivity : Activity() {
         webView.settings.javaScriptCanOpenWindowsAutomatically = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         webView.webChromeClient = WebChromeClient()
-        bridgeReady = installSecurePrinterBridge()
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -68,6 +66,7 @@ class MainActivity : Activity() {
         }
 
         setContentView(webView)
+        installSecurePrinterBridge()
         requestBluetoothPermissionIfNeeded()
         webView.loadUrl(APP_URL)
     }
@@ -91,7 +90,7 @@ class MainActivity : Activity() {
                 grantResults[0] == PackageManager.PERMISSION_GRANTED
             Toast.makeText(
                 this,
-                if (granted) "Bluetooth access enabled. Open Settings → Printers."
+                if (granted) "Bluetooth access enabled. Open llMenu → Settings → Printer."
                 else "Allow Nearby devices permission to use a Bluetooth printer.",
                 Toast.LENGTH_LONG
             ).show()
@@ -106,7 +105,7 @@ class MainActivity : Activity() {
 
         WebViewCompat.addWebMessageListener(
             webView,
-            "MenuFiguresPrinter",
+            "LlMenuPrinter",
             setOf(TRUSTED_ORIGIN)
         ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
@@ -251,12 +250,12 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        disconnectPrinter()
+        bridgeExecutor.shutdownNow()
         if (::webView.isInitialized) {
             webView.stopLoading()
             webView.destroy()
         }
-        disconnectPrinter()
-        bridgeExecutor.shutdownNow()
         super.onDestroy()
     }
 }
