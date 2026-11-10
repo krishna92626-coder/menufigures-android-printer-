@@ -8,6 +8,7 @@ android {
     signingConfigs {
         create("stableDebug") {
             storeFile = file("debug.keystore")
+            storeType = "PKCS12"
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
