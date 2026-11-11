@@ -49,6 +49,7 @@ class MainActivity : Activity() {
 
         webView = WebView(this)
         webView.settings.javaScriptEnabled = true
+        webView.settings.userAgentString = webView.settings.userAgentString + " llMenuAndroidPrinter/1"
         webView.settings.domStorageEnabled = true
         webView.settings.allowFileAccess = false
         webView.settings.allowContentAccess = false
