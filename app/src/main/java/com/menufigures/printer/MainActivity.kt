@@ -15,6 +15,7 @@ import android.util.Base64
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.JavascriptInterface
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewCompat
@@ -63,6 +64,19 @@ class MainActivity : Activity() {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
                 if (uri == null || !isTrustedUrl(uri)) view.stopLoading()
             }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                super.onPageFinished(view, url)
+                val uri = runCatching { Uri.parse(url) }.getOrNull()
+                if (uri != null && isTrustedUrl(uri) &&
+                    !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
+                ) {
+                    view.evaluateJavascript(
+                        "(function(){if(window.LlMenuPrinter&&typeof window.LlMenuPrinter.postMessage==='function')return;var listeners=[];window.LlMenuPrinter={postMessage:function(data){window.LlMenuPrinterNative.postMessage(String(data));},addEventListener:function(type,fn){if(type==='message'&&typeof fn==='function')listeners.push(fn);},__dispatchMessage:function(data){listeners.slice().forEach(function(fn){try{fn({data:data});}catch(e){}});}};window.dispatchEvent(new Event('llmenu-printer-bridge-ready'));})();",
+                        null
+                    )
+                }
+            }
         }
 
         setContentView(webView)
@@ -100,8 +114,32 @@ class MainActivity : Activity() {
         }
     }
 
+    private inner class LegacyPrinterBridge {
+        @JavascriptInterface
+        fun postMessage(payload: String) {
+            val currentUrl = runCatching { Uri.parse(webView.url) }.getOrNull()
+            if (currentUrl == null || !isTrustedUrl(currentUrl)) return
+
+            bridgeExecutor.execute {
+                val response = handleBridgeMessage(payload)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed && ::webView.isInitialized) {
+                        val quoted = JSONObject.quote(response)
+                        webView.evaluateJavascript(
+                            "window.LlMenuPrinter&&window.LlMenuPrinter.__dispatchMessage($quoted);",
+                            null
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     private fun installSecurePrinterBridge(): Boolean {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            webView.addJavascriptInterface(LegacyPrinterBridge(), "LlMenuPrinterNative")
+            return true
+        }
 
         WebViewCompat.addWebMessageListener(
             webView,
