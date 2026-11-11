@@ -36,6 +36,7 @@ class MainActivity : Activity() {
 
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private val bridgeExecutor = Executors.newSingleThreadExecutor()
+    private val legacyBridgeToken = UUID.randomUUID().toString()
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
 
@@ -72,7 +73,7 @@ class MainActivity : Activity() {
                     !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
                 ) {
                     view.evaluateJavascript(
-                        "(function(){if(window.LlMenuPrinter&&typeof window.LlMenuPrinter.postMessage==='function')return;var listeners=[];window.LlMenuPrinter={postMessage:function(data){window.LlMenuPrinterNative.postMessage(String(data));},addEventListener:function(type,fn){if(type==='message'&&typeof fn==='function')listeners.push(fn);},__dispatchMessage:function(data){listeners.slice().forEach(function(fn){try{fn({data:data});}catch(e){}});}};window.dispatchEvent(new Event('llmenu-printer-bridge-ready'));})();",
+                        "(function(){if(window.LlMenuPrinter&&typeof window.LlMenuPrinter.postMessage==='function')return;var listeners=[];window.LlMenuPrinter={postMessage:function(data){window.LlMenuPrinterNative.postMessage(String(data),'$legacyBridgeToken');},addEventListener:function(type,fn){if(type==='message'&&typeof fn==='function')listeners.push(fn);},__dispatchMessage:function(data){listeners.slice().forEach(function(fn){try{fn({data:data});}catch(e){}});}};window.dispatchEvent(new Event('llmenu-printer-bridge-ready'));})();",
                         null
                     )
                 }
@@ -114,9 +115,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private inner class LegacyPrinterBridge {
+    private inner class LegacyPrinterBridge(private val token: String) {
         @JavascriptInterface
-        fun postMessage(payload: String) {
+        fun postMessage(payload: String, suppliedToken: String) {
+            if (suppliedToken != token) return
             val currentUrl = runCatching { Uri.parse(webView.url) }.getOrNull()
             if (currentUrl == null || !isTrustedUrl(currentUrl)) return
 
@@ -137,7 +139,7 @@ class MainActivity : Activity() {
 
     private fun installSecurePrinterBridge(): Boolean {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            webView.addJavascriptInterface(LegacyPrinterBridge(), "LlMenuPrinterNative")
+            webView.addJavascriptInterface(LegacyPrinterBridge(legacyBridgeToken), "LlMenuPrinterNative")
             return true
         }
 
