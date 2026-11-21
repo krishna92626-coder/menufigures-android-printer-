@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1005758263396",
+    "project_id": "menufigures-955d5",
+    "storage_bucket": "menufigures-955d5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1005758263396:android:fae3d6d9a3f7fdb2f8af71",
+        "android_client_info": {
+          "package_name": "com.menufigures.printer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAUMDLZxv73wGNLIA6fiatuhX2LOpIDZtY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
