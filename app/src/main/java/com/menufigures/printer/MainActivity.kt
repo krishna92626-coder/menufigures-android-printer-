@@ -206,6 +206,11 @@ class MainActivity : Activity() {
         if (FirebaseApp.getApps(this).isEmpty()) {
             return resultError("Firebase is not configured in this APK. Add the MenuFigures google-services.json file and rebuild.")
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return resultError("Allow notifications for MenuFigures in Android settings, then tap Enable alerts again.")
+        }
         val token = Tasks.await(FirebaseMessaging.getInstance().token, 20, TimeUnit.SECONDS)
         if (token.isBlank()) return resultError("Firebase returned an empty device token.")
         return JSONObject().put("ok", true).put("token", token)
