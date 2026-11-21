@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, fix/menufigures-webview-file-upload]
 
 permissions:
   contents: write
