@@ -1,10 +1,14 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
 }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.15.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("androidx.core:core-ktx:1.15.0")
 }
 
 android {
@@ -15,8 +19,8 @@ android {
         applicationId = "com.menufigures.printer"
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.5.2"
+        versionCode = 9
+        versionName = "0.6.0"
     }
 
     signingConfigs {
