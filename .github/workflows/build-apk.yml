@@ -30,9 +30,12 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          test -n "$GOOGLE_SERVICES_JSON_BASE64" || (echo "Missing GOOGLE_SERVICES_JSON_BASE64 repository secret for package com.menufigures.printer" && exit 1)
-          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
+          if [ ! -s app/google-services.json ]; then
+            test -n "$GOOGLE_SERVICES_JSON_BASE64" || (echo "Missing app/google-services.json and GOOGLE_SERVICES_JSON_BASE64 repository secret" && exit 1)
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
+          fi
           test -s app/google-services.json
+          grep -q '"project_id": "menufigures-955d5"' app/google-services.json || (echo "Unexpected Firebase project; expected menufigures-955d5" && exit 1)
           grep -q '"com.menufigures.printer"' app/google-services.json || (echo "Firebase config does not contain package com.menufigures.printer" && exit 1)
 
       - name: Prepare private release signing key
