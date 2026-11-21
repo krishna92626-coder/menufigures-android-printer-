@@ -78,7 +78,7 @@ class MainActivity : Activity() {
 
         setContentView(webView)
         requestBluetoothPermissionIfNeeded()
-        webView.loadUrl(APP_URL + safeInternalPath(intent.getStringExtra("push_path")))
+        webView.loadUrl(APP_URL + safeInternalPath(intent.getStringExtra("push_path") ?: intent.getStringExtra("url")))
     }
 
     private fun safeInternalPath(value: String?): String {
@@ -124,7 +124,7 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val path = safeInternalPath(intent.getStringExtra("push_path"))
+        val path = safeInternalPath(intent.getStringExtra("push_path") ?: intent.getStringExtra("url"))
         if (path.isNotEmpty() && ::webView.isInitialized) {
             webView.post { webView.loadUrl(APP_URL + path) }
         }
