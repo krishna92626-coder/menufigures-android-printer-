@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -16,6 +17,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ValueCallback
 import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -30,6 +32,7 @@ class MainActivity : Activity() {
         private const val TRUSTED_HOST = "preview--menufigures.apper.so"
         private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
+        private const val FILE_CHOOSER_REQUEST = 42
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
     }
 
@@ -38,6 +41,7 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
     private var bridgeReady = false
+    private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,10 +54,39 @@ class MainActivity : Activity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.allowFileAccess = false
-        webView.settings.allowContentAccess = false
+        // Permit only content:// URIs explicitly granted by Android's system picker.
+        webView.settings.allowContentAccess = true
         webView.settings.javaScriptCanOpenWindowsAutomatically = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                pendingFileChooser?.onReceiveValue(null)
+                pendingFileChooser = filePathCallback
+                return try {
+                    val pickerIntent = fileChooserParams.createIntent().apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivityForResult(
+                        pickerIntent,
+                        FILE_CHOOSER_REQUEST
+                    )
+                    true
+                } catch (error: Exception) {
+                    pendingFileChooser?.onReceiveValue(null)
+                    pendingFileChooser = null
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Unable to open Gallery or file picker.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    false
+                }
+            }
+        }
         bridgeReady = installSecurePrinterBridge()
 
         webView.webViewClient = object : WebViewClient() {
@@ -70,6 +103,29 @@ class MainActivity : Activity() {
         setContentView(webView)
         requestBluetoothPermissionIfNeeded()
         webView.loadUrl(APP_URL)
+    }
+
+    @Deprecated("Deprecated Android callback retained for WebView file chooser compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FILE_CHOOSER_REQUEST) return
+
+        val callback = pendingFileChooser ?: return
+        pendingFileChooser = null
+
+        val selectedUris: Array<Uri>? = if (resultCode == RESULT_OK) {
+            val clipData = data?.clipData
+            when {
+                clipData != null -> Array(clipData.itemCount) { index ->
+                    clipData.getItemAt(index).uri
+                }
+                data?.data != null -> arrayOf(data.data!!)
+                else -> null
+            }
+        } else {
+            null
+        }
+        callback.onReceiveValue(selectedUris)
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -251,6 +307,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        pendingFileChooser?.onReceiveValue(null)
+        pendingFileChooser = null
         if (::webView.isInitialized) {
             webView.stopLoading()
             webView.destroy()
