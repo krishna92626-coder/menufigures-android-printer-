@@ -7,12 +7,15 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
 import android.webkit.WebChromeClient
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient.FileChooserParams
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.JavascriptInterface
@@ -31,6 +34,7 @@ class MainActivity : Activity() {
         private const val TRUSTED_HOST = "llmenu-light-pulse.apper.so"
         private const val TRUSTED_ORIGIN = "https://llmenu-light-pulse.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
+        private const val FILE_CHOOSER_REQUEST = 42
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
     }
 
@@ -39,6 +43,7 @@ class MainActivity : Activity() {
     private val legacyBridgeToken = UUID.randomUUID().toString()
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
+    private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,10 +57,58 @@ class MainActivity : Activity() {
         webView.settings.userAgentString = webView.settings.userAgentString + " llMenuAndroidPrinter/1"
         webView.settings.domStorageEnabled = true
         webView.settings.allowFileAccess = false
-        webView.settings.allowContentAccess = false
+        // Android grants access only to files explicitly selected by the user.
+        webView.settings.allowContentAccess = true
         webView.settings.javaScriptCanOpenWindowsAutomatically = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                // Complete any previous request before accepting a new one.
+                pendingFileChooser?.onReceiveValue(null)
+                pendingFileChooser = filePathCallback
+
+                return try {
+                    val acceptTypes = fileChooserParams.acceptTypes
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                    val picker = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = when {
+                            acceptTypes.size == 1 -> acceptTypes.first()
+                            acceptTypes.isEmpty() -> "*/*"
+                            else -> "*/*"
+                        }
+                        if (acceptTypes.size > 1) {
+                            putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+                        }
+                        putExtra(
+                            Intent.EXTRA_ALLOW_MULTIPLE,
+                            fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                        )
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivityForResult(
+                        Intent.createChooser(picker, "Choose a file"),
+                        FILE_CHOOSER_REQUEST
+                    )
+                    true
+                } catch (error: Exception) {
+                    pendingFileChooser?.onReceiveValue(null)
+                    pendingFileChooser = null
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Unable to open the file picker.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    false
+                }
+            }
+        }
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -85,6 +138,29 @@ class MainActivity : Activity() {
         installSecurePrinterBridge()
         requestBluetoothPermissionIfNeeded()
         webView.loadUrl(APP_URL)
+    }
+
+    @Deprecated("Deprecated by Android, retained for WebView file chooser compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FILE_CHOOSER_REQUEST) return
+
+        val callback = pendingFileChooser ?: return
+        pendingFileChooser = null
+
+        val selectedUris = if (resultCode == RESULT_OK) {
+            val clipData = data?.clipData
+            when {
+                clipData != null -> Array(clipData.itemCount) { index ->
+                    clipData.getItemAt(index).uri
+                }
+                data?.data != null -> arrayOf(data.data!!)
+                else -> null
+            }
+        } else {
+            null
+        }
+        callback.onReceiveValue(selectedUris)
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -291,6 +367,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        pendingFileChooser?.onReceiveValue(null)
+        pendingFileChooser = null
         disconnectPrinter()
         bridgeExecutor.shutdownNow()
         if (::webView.isInitialized) {
