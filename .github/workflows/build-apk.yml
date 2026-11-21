@@ -26,6 +26,15 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Configure Firebase for the MenuFigures Android app
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          test -n "$GOOGLE_SERVICES_JSON_BASE64" || (echo "Missing GOOGLE_SERVICES_JSON_BASE64 repository secret for package com.menufigures.printer" && exit 1)
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
+          test -s app/google-services.json
+          grep -q '"com.menufigures.printer"' app/google-services.json || (echo "Firebase config does not contain package com.menufigures.printer" && exit 1)
+
       - name: Prepare private release signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -72,4 +81,4 @@ jobs:
           gh release create "$TAG" app/build/outputs/apk/release/app-release.apk \
             --target "$GITHUB_SHA" \
             --title "MenuFigures signed release ${GITHUB_RUN_NUMBER}" \
-            --notes "Signed release APK for MenuFigures. Built from commit ${GITHUB_SHA}. Bluetooth printer compatibility still requires a physical printer test."
+            --notes "Signed release APK with native Firebase push for MenuFigures. Bluetooth printer compatibility still requires a physical printer test."
