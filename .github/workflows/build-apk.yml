@@ -3,7 +3,7 @@ name: Build llMenu Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, llmenu-inbuilt-printing]
+    branches: [main, llmenu-inbuilt-printing, fix/webview-file-upload]
 
 permissions:
   contents: write
