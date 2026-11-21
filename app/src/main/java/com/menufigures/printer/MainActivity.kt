@@ -2,6 +2,8 @@ package com.menufigures.printer
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
@@ -19,10 +21,14 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.google.android.gms.tasks.Tasks
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     companion object {
@@ -30,6 +36,8 @@ class MainActivity : Activity() {
         private const val TRUSTED_HOST = "preview--menufigures.apper.so"
         private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
+        private const val PUSH_PERMISSION_REQUEST = 42
+        private const val PUSH_CHANNEL_ID = "menufigures_orders"
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
     }
 
@@ -46,6 +54,7 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
             android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
+        createNotificationChannel()
         webView = WebView(this)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -69,7 +78,29 @@ class MainActivity : Activity() {
 
         setContentView(webView)
         requestBluetoothPermissionIfNeeded()
-        webView.loadUrl(APP_URL)
+        webView.loadUrl(APP_URL + safeInternalPath(intent.getStringExtra("push_path")))
+    }
+
+    private fun safeInternalPath(value: String?): String {
+        if (value.isNullOrBlank() || !value.startsWith("/") || value.startsWith("//")) return ""
+        return runCatching {
+            val uri = Uri.parse(value)
+            if (uri.scheme != null || uri.host != null) "" else value
+        }.getOrDefault("")
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                PUSH_CHANNEL_ID,
+                "MenuFigures order alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "New orders and restaurant service requests"
+                enableVibration(true)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -77,6 +108,25 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), BLUETOOTH_PERMISSION_REQUEST)
+        } else {
+            requestNotificationPermissionIfNeeded()
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), PUSH_PERMISSION_REQUEST)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val path = safeInternalPath(intent.getStringExtra("push_path"))
+        if (path.isNotEmpty() && ::webView.isInitialized) {
+            webView.post { webView.loadUrl(APP_URL + path) }
         }
     }
 
@@ -98,6 +148,16 @@ class MainActivity : Activity() {
             if (granted && ::webView.isInitialized) {
                 webView.post { webView.reload() }
             }
+            requestNotificationPermissionIfNeeded()
+        } else if (requestCode == PUSH_PERMISSION_REQUEST) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            Toast.makeText(
+                this,
+                if (granted) "MenuFigures notifications enabled."
+                else "Allow notifications in Android settings to receive order alerts.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -142,6 +202,23 @@ class MainActivity : Activity() {
     private fun resultError(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)
 
+    private fun getPushToken(): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK. Add the MenuFigures google-services.json file and rebuild.")
+        }
+        val token = Tasks.await(FirebaseMessaging.getInstance().token, 20, TimeUnit.SECONDS)
+        if (token.isBlank()) return resultError("Firebase returned an empty device token.")
+        return JSONObject().put("ok", true).put("token", token)
+    }
+
+    private fun deletePushToken(): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().deleteToken(), 20, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
+
     private fun handleBridgeMessage(payload: String): String {
         val request = runCatching { JSONObject(payload) }.getOrNull()
             ?: return JSONObject().put("id", "").put(
@@ -157,12 +234,14 @@ class MainActivity : Activity() {
                 "connect" -> connectPrinter(args.optString("address"))
                 "printEscPos" -> printEscPos(args.optString("base64"))
                 "disconnect" -> disconnectPrinter()
+                "getPushToken" -> getPushToken()
+                "deletePushToken" -> deletePushToken()
                 else -> resultError("Unsupported printer operation.")
             }
         } catch (error: SecurityException) {
-            resultError("Allow Nearby devices permission in Android settings, then try again.")
+            resultError("Allow Nearby devices or notification permission in Android settings, then try again.")
         } catch (error: Exception) {
-            resultError(error.message ?: "The Bluetooth printer operation failed.")
+            resultError(error.message ?: "The Android device operation failed.")
         }
         return JSONObject().put("id", id).put("result", result).toString()
     }
