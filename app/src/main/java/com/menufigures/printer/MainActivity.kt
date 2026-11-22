@@ -224,6 +224,33 @@ class MainActivity : Activity() {
         return JSONObject().put("ok", true)
     }
 
+    private fun subscribeToTopic(topic: String): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        if (!Regex("^mf_[0-9a-f]{64}$").matches(topic)) {
+            return resultError("The store notification channel is invalid.")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return resultError("Allow notifications for MenuFigures in Android settings, then try again.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().subscribeToTopic(topic), 20, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
+
+    private fun unsubscribeFromTopic(topic: String): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        if (!Regex("^mf_[0-9a-f]{64}$").matches(topic)) {
+            return resultError("The store notification channel is invalid.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().unsubscribeFromTopic(topic), 20, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
+
     private fun handleBridgeMessage(payload: String): String {
         val request = runCatching { JSONObject(payload) }.getOrNull()
             ?: return JSONObject().put("id", "").put(
@@ -241,6 +268,8 @@ class MainActivity : Activity() {
                 "disconnect" -> disconnectPrinter()
                 "getPushToken" -> getPushToken()
                 "deletePushToken" -> deletePushToken()
+                "subscribeToTopic" -> subscribeToTopic(args.optString("topic"))
+                "unsubscribeFromTopic" -> unsubscribeFromTopic(args.optString("topic"))
                 else -> resultError("Unsupported printer operation.")
             }
         } catch (error: SecurityException) {
