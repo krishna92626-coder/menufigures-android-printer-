@@ -14,7 +14,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
+import android.util.Log
+import android.net.http.SslError
+import android.webkit.ConsoleMessage
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -62,17 +68,68 @@ class MainActivity : Activity() {
         webView.settings.allowContentAccess = false
         webView.settings.javaScriptCanOpenWindowsAutomatically = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    Log.e("MenuFiguresWeb", "JS error: ${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                }
+                return true
+            }
+        }
         bridgeReady = installSecurePrinterBridge()
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return !isTrustedUrl(request.url)
+                val allowed = isTrustedUrl(request.url)
+                if (!allowed) {
+                    Log.w("MenuFiguresWeb", "Blocked navigation to ${request.url}")
+                    if (request.isForMainFrame) {
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "MenuFigures blocked an external redirect: ${request.url.host}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                return !allowed
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri == null || !isTrustedUrl(uri)) view.stopLoading()
+                if (uri == null || !isTrustedUrl(uri)) {
+                    Log.w("MenuFiguresWeb", "Stopped untrusted page: $url")
+                    view.stopLoading()
+                } else {
+                    Log.i("MenuFiguresWeb", "Loading page: $url")
+                }
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                if (request.isForMainFrame) {
+                    val detail = "WebView load error ${error.errorCode}: ${error.description}"
+                    Log.e("MenuFiguresWeb", "$detail; URL=${request.url}")
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                super.onReceivedHttpError(view, request, response)
+                if (request.isForMainFrame) {
+                    val detail = "MenuFigures server response: HTTP ${response.statusCode}"
+                    Log.e("MenuFiguresWeb", "$detail; URL=${request.url}")
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                Log.e("MenuFiguresWeb", "SSL error: ${error.primaryError}; URL=${error.url}")
+                handler.cancel()
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Secure connection failed. Check phone date/time and network, then retry.", Toast.LENGTH_LONG).show()
+                }
             }
         }
 
