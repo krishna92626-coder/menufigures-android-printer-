@@ -41,6 +41,8 @@ class MainActivity : Activity() {
         private const val APP_URL = "https://preview--menufigures.apper.so"
         private const val TRUSTED_HOST = "preview--menufigures.apper.so"
         private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
+        // Apper authentication/integration handoff host; navigation only, never grant native bridge access.
+        private const val AUTH_HANDOFF_HOST = "apper.integrately.com"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
         private const val PUSH_PERMISSION_REQUEST = 42
         private const val PUSH_CHANNEL_ID = "menufigures_orders"
@@ -80,9 +82,9 @@ class MainActivity : Activity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val allowed = isTrustedUrl(request.url)
+                val allowed = isTrustedNavigationUrl(request.url)
                 if (!allowed) {
-                    Log.w("MenuFiguresWeb", "Blocked navigation to ${request.url}")
+                    Log.w("MenuFiguresWeb", "Blocked navigation from ${view.url} to ${request.url}; mainFrame=${request.isForMainFrame}")
                     if (request.isForMainFrame) {
                         runOnUiThread {
                             Toast.makeText(this@MainActivity, "MenuFigures blocked an external redirect: ${request.url.host}", Toast.LENGTH_LONG).show()
@@ -94,7 +96,7 @@ class MainActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri == null || !isTrustedUrl(uri)) {
+                if (uri == null || !isTrustedNavigationUrl(uri)) {
                     Log.w("MenuFiguresWeb", "Stopped untrusted page: $url")
                     view.stopLoading()
                 } else {
@@ -248,6 +250,16 @@ class MainActivity : Activity() {
             uri.userInfo == null
 
     private fun isTrustedUrl(uri: Uri): Boolean = isTrustedOrigin(uri)
+
+    // Permit only the exact HTTPS Apper handoff host for top-level navigation.
+    // The native printer/push bridge remains restricted to TRUSTED_ORIGIN above.
+    private fun isTrustedNavigationUrl(uri: Uri): Boolean =
+        isTrustedOrigin(uri) || (
+            uri.scheme.equals("https", ignoreCase = true) &&
+                uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) &&
+                (uri.port == -1 || uri.port == 443) &&
+                uri.userInfo == null
+        )
 
     private fun hasBluetoothPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
