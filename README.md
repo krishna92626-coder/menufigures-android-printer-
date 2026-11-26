@@ -1,28 +1,36 @@
-# MenuFigures Android Printer Companion — starter source
+# MenuFigures Android Printer Companion
 
-Android Studio project for an initial Bluetooth Classic (SPP) + ESC/POS prototype.
+Android WebView companion for MenuFigures with a secure Bluetooth Classic (SPP) ESC/POS bridge and native Firebase Cloud Messaging support.
+
+## Download the latest installable APK
+
+- **Direct APK:** [Download the latest signed MenuFigures APK](https://github.com/krishna92626-coder/menufigures-android-printer-/releases/latest/download/app-release.apk)
+- **Release details:** [GitHub Releases](https://github.com/krishna92626-coder/menufigures-android-printer-/releases)
+- **Build artifacts:** [GitHub Actions](https://github.com/krishna92626-coder/menufigures-android-printer-/actions) → latest successful **Build Android APK** run → `menufigures-release-apk`.
+
+The APK is built as a signed release (`app-release.apk`), not as `app-debug.apk`. Install updates over an existing installation only when they are signed with the same private release keystore.
 
 ## Included
-- Android app shell
-- Lists already-paired Bluetooth devices
-- Attempts Bluetooth Classic RFCOMM/SPP connection
-- ESC/POS text receipt + test receipt
-- 58mm / 80mm width selection
-- 1–3 copies
-- Receives MenuFigures print intents using `menufigures://print?paper=58&copies=1&text=URL_ENCODED_TEXT`
 
-## Download the APK
-The GitHub Actions workflow builds the APK on every push to `main` and when manually started.
+- Full-screen MenuFigures WebView.
+- Secure origin-restricted JavaScript message bridge.
+- Paired Bluetooth Classic printer discovery and RFCOMM/SPP connection.
+- ESC/POS receipt printing with bitmap rendering for Hindi-capable printer output.
+- Printer paper width, copies and receipt configuration through MenuFigures Settings.
+- Firebase Cloud Messaging device token and per-store topic subscription support.
+- Android notification channel, runtime notification permission and tap-to-open internal MenuFigures routes.
 
-- **Direct APK download:** open the repository's [Releases](https://github.com/krishna92626-coder/menufigures-android-printer-/releases/latest) page and download `app-debug.apk` from the latest `MenuFigures Printer APK build` release.
-- **Build artifact:** open [Actions](https://github.com/krishna92626-coder/menufigures-android-printer-/actions), select the latest successful **Build Android APK** run, then download `menufigures-debug-apk`.
+## Build requirements
 
-The Releases download is the easiest option on Android because it downloads the APK file directly instead of an API response or an artifact ZIP.
+GitHub Actions expects these repository secrets for a signed release:
 
-## Important limits — not production-certified
-- EZO is a brand, not a guaranteed protocol. This prototype assumes Bluetooth Classic SPP and ESC/POS. Some EZO models may use BLE or proprietary protocols.
-- Pair the printer in Android Settings first; the app only lists bonded devices.
-- Android 12+ requires Nearby devices permission.
-- This source has not yet been compiled or tested on a physical EZO printer. A successful socket write does not prove that paper actually printed.
-- UTF-8 text support varies by printer firmware/code page. Hindi and other non-Latin text may need raster/bitmap rendering.
-- Production work still required: reliable persisted printer choice, retry/reconnect, permission UX, bitmap receipt rendering, status/error handling, security validation of inbound print intents, and physical tests across printer models.
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+The Firebase configuration for project `menufigures-955d5` and package `com.menufigures.printer` is included in the Android app source branch. Keep the private signing keystore and its passwords backed up securely; never commit them to this repository.
+
+## Printer compatibility
+
+The prototype assumes Bluetooth Classic SPP and ESC/POS. EZO is a brand, not a guaranteed protocol; some models may use BLE or proprietary protocols. Pair the printer in Android Settings first. Physical printing must be verified with each printer model. Hindi output depends on the printer's bitmap/raster support and paper configuration.
