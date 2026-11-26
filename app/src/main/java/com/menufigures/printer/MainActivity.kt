@@ -32,9 +32,9 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     companion object {
-        private const val APP_URL = "https://apper.integrately.com/projects/dcc0b37f69d444cebeb26c0bd1c56657"
-        private const val TRUSTED_HOST = "apper.integrately.com"
-        private const val TRUSTED_ORIGIN = "https://apper.integrately.com"
+        private const val APP_URL = "https://preview--menufigures.apper.so"
+        private const val TRUSTED_HOST = "preview--menufigures.apper.so"
+        private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
         private const val PUSH_PERMISSION_REQUEST = 42
         private const val PUSH_CHANNEL_ID = "menufigures_orders"
