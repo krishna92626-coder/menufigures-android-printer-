@@ -281,7 +281,7 @@ class MainActivity : Activity() {
                 (uri.port == -1 || uri.port == 80) &&
                 uri.userInfo == null
         return if (isHttpAuthHandoff) {
-            uri.buildUpon().scheme("https").port(-1).build().toString()
+            uri.buildUpon().scheme("https").encodedAuthority(AUTH_HANDOFF_HOST).build().toString()
         } else {
             null
         }
