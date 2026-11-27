@@ -42,6 +42,7 @@ class MainActivity : Activity() {
         private const val TRUSTED_HOST = "preview--menufigures.apper.so"
         private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
         // Apper authentication/integration handoff host; navigation only, never grant native bridge access.
+        private const val AUTH_SERVICE_HOST = "auth.apper.io"
         private const val AUTH_HANDOFF_HOST = "apper.integrately.com"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
         private const val PUSH_PERMISSION_REQUEST = 42
@@ -262,12 +263,13 @@ class MainActivity : Activity() {
 
     private fun isTrustedUrl(uri: Uri): Boolean = isTrustedOrigin(uri)
 
-    // Permit only the exact HTTPS Apper handoff host for top-level navigation.
-    // The native printer/push bridge remains restricted to TRUSTED_ORIGIN above.
+    // Permit only the exact HTTPS MenuFigures origin and Apper auth handoff hosts for navigation.
+    // Authentication hosts never receive native printer/push bridge access.
     private fun isTrustedNavigationUrl(uri: Uri): Boolean =
         isTrustedOrigin(uri) || (
             uri.scheme.equals("https", ignoreCase = true) &&
-                uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) &&
+                (uri.host.equals(AUTH_SERVICE_HOST, ignoreCase = true) ||
+                    uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true)) &&
                 (uri.port == -1 || uri.port == 443) &&
                 uri.userInfo == null
         )
