@@ -44,6 +44,7 @@ class MainActivity : Activity() {
         // Apper authentication/integration handoff host; navigation only, never grant native bridge access.
         private const val AUTH_SERVICE_HOST = "auth.apper.io"
         private const val AUTH_HANDOFF_HOST = "apper.integrately.com"
+        private const val GOOGLE_AUTH_HOST = "accounts.google.com"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
         private const val PUSH_PERMISSION_REQUEST = 42
         private const val PUSH_CHANNEL_ID = "menufigures_orders"
@@ -269,7 +270,8 @@ class MainActivity : Activity() {
         isTrustedOrigin(uri) || (
             uri.scheme.equals("https", ignoreCase = true) &&
                 (uri.host.equals(AUTH_SERVICE_HOST, ignoreCase = true) ||
-                    uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true)) &&
+                    uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) ||
+                    uri.host.equals(GOOGLE_AUTH_HOST, ignoreCase = true)) &&
                 (uri.port == -1 || uri.port == 443) &&
                 uri.userInfo == null
         )
