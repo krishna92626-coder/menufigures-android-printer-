@@ -2,6 +2,8 @@ package com.menufigures.printer
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
@@ -12,29 +14,49 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
+import android.util.Log
+import android.net.http.SslError
+import android.webkit.ConsoleMessage
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.google.android.gms.tasks.Tasks
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     companion object {
-        private const val APP_URL = "https://preview--menufigures.apper.so"
-        private const val TRUSTED_HOST = "preview--menufigures.apper.so"
-        private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
+        private const val APP_URL = "https://menufigures.apper.so"
+        private const val TRUSTED_HOST = "menufigures.apper.so"
+        private const val TRUSTED_ORIGIN = "https://menufigures.apper.so"
+        // Apper authentication/integration handoff host; navigation only, never grant native bridge access.
+        private const val AUTH_SERVICE_HOST = "auth.apper.io"
+        private const val AUTH_HANDOFF_HOST = "apper.integrately.com"
+        private const val GOOGLE_AUTH_HOST = "accounts.google.com"
         private const val BLUETOOTH_PERMISSION_REQUEST = 41
+        private const val PUSH_PERMISSION_REQUEST = 42
+        private const val PUSH_CHANNEL_ID = "menufigures_orders"
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
+        private const val FIREBASE_TASK_TIMEOUT_SECONDS = 60L
     }
 
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-    private val bridgeExecutor = Executors.newSingleThreadExecutor()
+    // Keep slow Firebase Tasks.await calls off the printer queue.
+    // A pending push token must never delay paired-printer discovery, connection, or printing.
+    private val printerExecutor = Executors.newSingleThreadExecutor()
+    private val pushExecutor = Executors.newSingleThreadExecutor()
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
     private var bridgeReady = false
@@ -46,6 +68,7 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
             android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
+        createNotificationChannel()
         webView = WebView(this)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -53,23 +76,107 @@ class MainActivity : Activity() {
         webView.settings.allowContentAccess = false
         webView.settings.javaScriptCanOpenWindowsAutomatically = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    Log.e("MenuFiguresWeb", "JS error: ${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                }
+                return true
+            }
+        }
         bridgeReady = installSecurePrinterBridge()
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return !isTrustedUrl(request.url)
+                val upgradeUrl = upgradeAuthHandoffToHttps(request.url)
+                if (request.isForMainFrame && upgradeUrl != null) {
+                    Log.i("MenuFiguresWeb", "Upgrading authentication redirect to HTTPS: $upgradeUrl")
+                    view.loadUrl(upgradeUrl)
+                    return true
+                }
+                val allowed = isTrustedNavigationUrl(request.url)
+                if (!allowed) {
+                    Log.w("MenuFiguresWeb", "Blocked navigation from ${view.url} to ${request.url}; mainFrame=${request.isForMainFrame}")
+                    if (request.isForMainFrame) {
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "Blocked redirect URL: ${request.url}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                return !allowed
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri == null || !isTrustedUrl(uri)) view.stopLoading()
+                val upgradeUrl = uri?.let { upgradeAuthHandoffToHttps(it) }
+                if (upgradeUrl != null) {
+                    Log.i("MenuFiguresWeb", "Upgrading authentication page to HTTPS: $upgradeUrl")
+                    view.stopLoading()
+                    view.loadUrl(upgradeUrl)
+                } else if (uri == null || !isTrustedNavigationUrl(uri)) {
+                    Log.w("MenuFiguresWeb", "Stopped untrusted page: $url")
+                    view.stopLoading()
+                } else {
+                    Log.i("MenuFiguresWeb", "Loading page: $url")
+                }
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                if (request.isForMainFrame) {
+                    val detail = "WebView load error ${error.errorCode}: ${error.description}"
+                    Log.e("MenuFiguresWeb", "$detail; URL=${request.url}")
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                super.onReceivedHttpError(view, request, response)
+                if (request.isForMainFrame) {
+                    val detail = "MenuFigures server response: HTTP ${response.statusCode}"
+                    Log.e("MenuFiguresWeb", "$detail; URL=${request.url}")
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                Log.e("MenuFiguresWeb", "SSL error: ${error.primaryError}; URL=${error.url}")
+                handler.cancel()
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Secure connection failed. Check phone date/time and network, then retry.", Toast.LENGTH_LONG).show()
+                }
             }
         }
 
         setContentView(webView)
         requestBluetoothPermissionIfNeeded()
-        webView.loadUrl(APP_URL)
+        webView.loadUrl(APP_URL + safeInternalPath(intent.getStringExtra("push_path") ?: intent.getStringExtra("url")))
+    }
+
+    private fun safeInternalPath(value: String?): String {
+        if (value.isNullOrBlank() || !value.startsWith("/") || value.startsWith("//")) return ""
+        return runCatching {
+            val uri = Uri.parse(value)
+            if (uri.scheme != null || uri.host != null) "" else value
+        }.getOrDefault("")
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                PUSH_CHANNEL_ID,
+                "MenuFigures order alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "New orders and restaurant service requests"
+                enableVibration(true)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -77,6 +184,25 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), BLUETOOTH_PERMISSION_REQUEST)
+        } else {
+            requestNotificationPermissionIfNeeded()
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), PUSH_PERMISSION_REQUEST)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val path = safeInternalPath(intent.getStringExtra("push_path") ?: intent.getStringExtra("url"))
+        if (path.isNotEmpty() && ::webView.isInitialized) {
+            webView.post { webView.loadUrl(APP_URL + path) }
         }
     }
 
@@ -98,6 +224,16 @@ class MainActivity : Activity() {
             if (granted && ::webView.isInitialized) {
                 webView.post { webView.reload() }
             }
+            requestNotificationPermissionIfNeeded()
+        } else if (requestCode == PUSH_PERMISSION_REQUEST) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            Toast.makeText(
+                this,
+                if (granted) "MenuFigures notifications enabled."
+                else "Allow notifications in Android settings to receive order alerts.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -112,8 +248,16 @@ class MainActivity : Activity() {
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
 
             val payload = message.data
-            bridgeExecutor.execute {
+            val method = runCatching { JSONObject(payload).optString("method") }.getOrDefault("")
+            val executor = if (method in setOf("getPushToken", "deletePushToken", "subscribeToTopic", "unsubscribeFromTopic")) {
+                pushExecutor
+            } else {
+                printerExecutor
+            }
+            executor.execute {
+                Log.d("MenuFiguresBridge", "Handling native bridge request: $method")
                 val response = handleBridgeMessage(payload)
+                Log.d("MenuFiguresBridge", "Completed native bridge request: $method")
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         runCatching { replyProxy.postMessage(response) }
@@ -132,6 +276,33 @@ class MainActivity : Activity() {
 
     private fun isTrustedUrl(uri: Uri): Boolean = isTrustedOrigin(uri)
 
+    // Permit only the exact HTTPS MenuFigures origin and Apper auth handoff hosts for navigation.
+    // Authentication hosts never receive native printer/push bridge access.
+    private fun isTrustedNavigationUrl(uri: Uri): Boolean =
+        isTrustedOrigin(uri) || (
+            uri.scheme.equals("https", ignoreCase = true) &&
+                (uri.host.equals(AUTH_SERVICE_HOST, ignoreCase = true) ||
+                    uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) ||
+                    uri.host.equals(GOOGLE_AUTH_HOST, ignoreCase = true)) &&
+                (uri.port == -1 || uri.port == 443) &&
+                uri.userInfo == null
+        )
+
+    // Upgrade only the exact authentication handoff host from HTTP to HTTPS.
+    // Never allow credentials or non-standard ports, and keep native bridge access restricted.
+    private fun upgradeAuthHandoffToHttps(uri: Uri): String? {
+        val isHttpAuthHandoff =
+            uri.scheme.equals("http", ignoreCase = true) &&
+                uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) &&
+                (uri.port == -1 || uri.port == 80) &&
+                uri.userInfo == null
+        return if (isHttpAuthHandoff) {
+            uri.buildUpon().scheme("https").encodedAuthority(AUTH_HANDOFF_HOST).build().toString()
+        } else {
+            null
+        }
+    }
+
     private fun hasBluetoothPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -141,6 +312,55 @@ class MainActivity : Activity() {
 
     private fun resultError(message: String): JSONObject =
         JSONObject().put("ok", false).put("error", message)
+
+    private fun getPushToken(): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK. Add the MenuFigures google-services.json file and rebuild.")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return resultError("Allow notifications for MenuFigures in Android settings, then tap Enable alerts again.")
+        }
+        val token = Tasks.await(FirebaseMessaging.getInstance().token, FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (token.isBlank()) return resultError("Firebase returned an empty device token.")
+        return JSONObject().put("ok", true).put("token", token)
+    }
+
+    private fun deletePushToken(): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().deleteToken(), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
+
+    private fun subscribeToTopic(topic: String): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        if (!Regex("^mf_[0-9a-f]{64}$").matches(topic)) {
+            return resultError("The store notification channel is invalid.")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return resultError("Allow notifications for MenuFigures in Android settings, then try again.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().subscribeToTopic(topic), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
+
+    private fun unsubscribeFromTopic(topic: String): JSONObject {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            return resultError("Firebase is not configured in this APK.")
+        }
+        if (!Regex("^mf_[0-9a-f]{64}$").matches(topic)) {
+            return resultError("The store notification channel is invalid.")
+        }
+        Tasks.await(FirebaseMessaging.getInstance().unsubscribeFromTopic(topic), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        return JSONObject().put("ok", true)
+    }
 
     private fun handleBridgeMessage(payload: String): String {
         val request = runCatching { JSONObject(payload) }.getOrNull()
@@ -157,12 +377,19 @@ class MainActivity : Activity() {
                 "connect" -> connectPrinter(args.optString("address"))
                 "printEscPos" -> printEscPos(args.optString("base64"))
                 "disconnect" -> disconnectPrinter()
+                "getPushToken" -> getPushToken()
+                "deletePushToken" -> deletePushToken()
+                "subscribeToTopic" -> subscribeToTopic(args.optString("topic"))
+                "unsubscribeFromTopic" -> unsubscribeFromTopic(args.optString("topic"))
                 else -> resultError("Unsupported printer operation.")
             }
+        } catch (error: java.util.concurrent.TimeoutException) {
+            Log.e("MenuFiguresPush", "Firebase task timed out while handling " + request.optString("method"), error)
+            resultError("Firebase push setup is taking too long. Check internet access, Google Play services, and try Enable alerts again.")
         } catch (error: SecurityException) {
-            resultError("Allow Nearby devices permission in Android settings, then try again.")
+            resultError("Allow Nearby devices or notification permission in Android settings, then try again.")
         } catch (error: Exception) {
-            resultError(error.message ?: "The Bluetooth printer operation failed.")
+            resultError(error.message ?: "The Android device operation failed.")
         }
         return JSONObject().put("id", id).put("result", result).toString()
     }
@@ -207,17 +434,32 @@ class MainActivity : Activity() {
         }
         adapter.cancelDiscovery()
 
-        val socket = device.createRfcommSocketToServiceRecord(spp)
-        try {
-            socket.connect()
-            synchronized(this) { printerSocket = socket }
-            return JSONObject().put("ok", true).put("name", device.name ?: "Bluetooth printer")
-        } catch (error: Exception) {
-            runCatching { socket.close() }
-            throw error
+        // Some ESC/POS printers reject secure RFCOMM handshakes despite supporting SPP.
+        // Try standard secure SPP first, then retry with Android insecure SPP.
+        var lastError: Exception? = null
+        val socketAttempts = listOf(
+            { device.createRfcommSocketToServiceRecord(spp) },
+            { device.createInsecureRfcommSocketToServiceRecord(spp) }
+        )
+        for ((index, createSocket) in socketAttempts.withIndex()) {
+            val socket = createSocket()
+            try {
+                socket.connect()
+                if (!socket.isConnected) throw java.io.IOException("Bluetooth printer socket did not remain connected.")
+                synchronized(this) { printerSocket = socket }
+                Log.i("MenuFiguresPrinter", "Connected to " + (device.name ?: address) + " using " + if (index == 0) "secure SPP" else "insecure SPP")
+                return JSONObject().put("ok", true).put("name", device.name ?: "Bluetooth printer")
+            } catch (error: Exception) {
+                lastError = error
+                runCatching { socket.close() }
+                Log.w("MenuFiguresPrinter", "SPP connection attempt " + (index + 1) + " failed for " + address, error)
+            }
         }
+        throw java.io.IOException(
+            "Could not connect to this printer. Keep it powered on, disconnect it from other phones, then pair it again in Android Bluetooth settings. Details: " + (lastError?.message ?: "connection failed"),
+            lastError
+        )
     }
-
     private fun printEscPos(base64: String): JSONObject {
         if (!hasBluetoothPermission()) return resultError("Allow Nearby devices permission in Android settings.")
         if (base64.isBlank()) return resultError("Receipt data is empty.")
@@ -256,7 +498,8 @@ class MainActivity : Activity() {
             webView.destroy()
         }
         disconnectPrinter()
-        bridgeExecutor.shutdownNow()
+        printerExecutor.shutdownNow()
+        pushExecutor.shutdownNow()
         super.onDestroy()
     }
 }
