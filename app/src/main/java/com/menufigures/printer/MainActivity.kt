@@ -38,9 +38,9 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     companion object {
-        private const val APP_URL = "https://preview--menufigures.apper.so"
-        private const val TRUSTED_HOST = "preview--menufigures.apper.so"
-        private const val TRUSTED_ORIGIN = "https://preview--menufigures.apper.so"
+        private const val APP_URL = "https://menufigures.apper.so"
+        private const val TRUSTED_HOST = "menufigures.apper.so"
+        private const val TRUSTED_ORIGIN = "https://menufigures.apper.so"
         // Apper authentication/integration handoff host; navigation only, never grant native bridge access.
         private const val AUTH_SERVICE_HOST = "auth.apper.io"
         private const val AUTH_HANDOFF_HOST = "apper.integrately.com"
