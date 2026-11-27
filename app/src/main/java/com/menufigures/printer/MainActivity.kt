@@ -82,12 +82,18 @@ class MainActivity : Activity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val upgradeUrl = upgradeAuthHandoffToHttps(request.url)
+                if (request.isForMainFrame && upgradeUrl != null) {
+                    Log.i("MenuFiguresWeb", "Upgrading authentication redirect to HTTPS: $upgradeUrl")
+                    view.loadUrl(upgradeUrl)
+                    return true
+                }
                 val allowed = isTrustedNavigationUrl(request.url)
                 if (!allowed) {
                     Log.w("MenuFiguresWeb", "Blocked navigation from ${view.url} to ${request.url}; mainFrame=${request.isForMainFrame}")
                     if (request.isForMainFrame) {
                         runOnUiThread {
-                            Toast.makeText(this@MainActivity, "MenuFigures blocked an external redirect: ${request.url.host}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "Blocked redirect URL: ${request.url}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -96,7 +102,12 @@ class MainActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull()
-                if (uri == null || !isTrustedNavigationUrl(uri)) {
+                val upgradeUrl = uri?.let { upgradeAuthHandoffToHttps(it) }
+                if (upgradeUrl != null) {
+                    Log.i("MenuFiguresWeb", "Upgrading authentication page to HTTPS: $upgradeUrl")
+                    view.stopLoading()
+                    view.loadUrl(upgradeUrl)
+                } else if (uri == null || !isTrustedNavigationUrl(uri)) {
                     Log.w("MenuFiguresWeb", "Stopped untrusted page: $url")
                     view.stopLoading()
                 } else {
@@ -260,6 +271,21 @@ class MainActivity : Activity() {
                 (uri.port == -1 || uri.port == 443) &&
                 uri.userInfo == null
         )
+
+    // Upgrade only the exact authentication handoff host from HTTP to HTTPS.
+    // Never allow credentials or non-standard ports, and keep native bridge access restricted.
+    private fun upgradeAuthHandoffToHttps(uri: Uri): String? {
+        val isHttpAuthHandoff =
+            uri.scheme.equals("http", ignoreCase = true) &&
+                uri.host.equals(AUTH_HANDOFF_HOST, ignoreCase = true) &&
+                (uri.port == -1 || uri.port == 80) &&
+                uri.userInfo == null
+        return if (isHttpAuthHandoff) {
+            uri.buildUpon().scheme("https").port(-1).build().toString()
+        } else {
+            null
+        }
+    }
 
     private fun hasBluetoothPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
