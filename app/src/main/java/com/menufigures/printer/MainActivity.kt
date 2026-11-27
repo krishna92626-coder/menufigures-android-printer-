@@ -423,17 +423,32 @@ class MainActivity : Activity() {
         }
         adapter.cancelDiscovery()
 
-        val socket = device.createRfcommSocketToServiceRecord(spp)
-        try {
-            socket.connect()
-            synchronized(this) { printerSocket = socket }
-            return JSONObject().put("ok", true).put("name", device.name ?: "Bluetooth printer")
-        } catch (error: Exception) {
-            runCatching { socket.close() }
-            throw error
+        // Some ESC/POS printers reject secure RFCOMM handshakes despite supporting SPP.
+        // Try standard secure SPP first, then retry with Android insecure SPP.
+        var lastError: Exception? = null
+        val socketAttempts = listOf(
+            { device.createRfcommSocketToServiceRecord(spp) },
+            { device.createInsecureRfcommSocketToServiceRecord(spp) }
+        )
+        for ((index, createSocket) in socketAttempts.withIndex()) {
+            val socket = createSocket()
+            try {
+                socket.connect()
+                if (!socket.isConnected) throw java.io.IOException("Bluetooth printer socket did not remain connected.")
+                synchronized(this) { printerSocket = socket }
+                Log.i("MenuFiguresPrinter", "Connected to " + (device.name ?: address) + " using " + if (index == 0) "secure SPP" else "insecure SPP")
+                return JSONObject().put("ok", true).put("name", device.name ?: "Bluetooth printer")
+            } catch (error: Exception) {
+                lastError = error
+                runCatching { socket.close() }
+                Log.w("MenuFiguresPrinter", "SPP connection attempt " + (index + 1) + " failed for " + address, error)
+            }
         }
+        throw java.io.IOException(
+            "Could not connect to this printer. Keep it powered on, disconnect it from other phones, then pair it again in Android Bluetooth settings. Details: " + (lastError?.message ?: "connection failed"),
+            lastError
+        )
     }
-
     private fun printEscPos(base64: String): JSONObject {
         if (!hasBluetoothPermission()) return resultError("Allow Nearby devices permission in Android settings.")
         if (base64.isBlank()) return resultError("Receipt data is empty.")
