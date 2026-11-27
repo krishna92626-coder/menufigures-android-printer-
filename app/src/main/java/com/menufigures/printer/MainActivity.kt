@@ -49,6 +49,7 @@ class MainActivity : Activity() {
         private const val PUSH_PERMISSION_REQUEST = 42
         private const val PUSH_CHANNEL_ID = "menufigures_orders"
         private const val MAX_RECEIPT_BYTES = 2 * 1024 * 1024
+        private const val FIREBASE_TASK_TIMEOUT_SECONDS = 60L
     }
 
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -310,7 +311,7 @@ class MainActivity : Activity() {
         ) {
             return resultError("Allow notifications for MenuFigures in Android settings, then tap Enable alerts again.")
         }
-        val token = Tasks.await(FirebaseMessaging.getInstance().token, 20, TimeUnit.SECONDS)
+        val token = Tasks.await(FirebaseMessaging.getInstance().token, FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         if (token.isBlank()) return resultError("Firebase returned an empty device token.")
         return JSONObject().put("ok", true).put("token", token)
     }
@@ -319,7 +320,7 @@ class MainActivity : Activity() {
         if (FirebaseApp.getApps(this).isEmpty()) {
             return resultError("Firebase is not configured in this APK.")
         }
-        Tasks.await(FirebaseMessaging.getInstance().deleteToken(), 20, TimeUnit.SECONDS)
+        Tasks.await(FirebaseMessaging.getInstance().deleteToken(), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         return JSONObject().put("ok", true)
     }
 
@@ -335,7 +336,7 @@ class MainActivity : Activity() {
         ) {
             return resultError("Allow notifications for MenuFigures in Android settings, then try again.")
         }
-        Tasks.await(FirebaseMessaging.getInstance().subscribeToTopic(topic), 20, TimeUnit.SECONDS)
+        Tasks.await(FirebaseMessaging.getInstance().subscribeToTopic(topic), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         return JSONObject().put("ok", true)
     }
 
@@ -346,7 +347,7 @@ class MainActivity : Activity() {
         if (!Regex("^mf_[0-9a-f]{64}$").matches(topic)) {
             return resultError("The store notification channel is invalid.")
         }
-        Tasks.await(FirebaseMessaging.getInstance().unsubscribeFromTopic(topic), 20, TimeUnit.SECONDS)
+        Tasks.await(FirebaseMessaging.getInstance().unsubscribeFromTopic(topic), FIREBASE_TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         return JSONObject().put("ok", true)
     }
 
@@ -371,6 +372,9 @@ class MainActivity : Activity() {
                 "unsubscribeFromTopic" -> unsubscribeFromTopic(args.optString("topic"))
                 else -> resultError("Unsupported printer operation.")
             }
+        } catch (error: java.util.concurrent.TimeoutException) {
+            Log.e("MenuFiguresPush", "Firebase task timed out while handling ${request.optString(\"method\")}", error)
+            resultError("Firebase push setup is taking too long. Check internet access, Google Play services, and try Enable alerts again.")
         } catch (error: SecurityException) {
             resultError("Allow Nearby devices or notification permission in Android settings, then try again.")
         } catch (error: Exception) {
