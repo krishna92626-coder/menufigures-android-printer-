@@ -373,7 +373,7 @@ class MainActivity : Activity() {
                 else -> resultError("Unsupported printer operation.")
             }
         } catch (error: java.util.concurrent.TimeoutException) {
-            Log.e("MenuFiguresPush", "Firebase task timed out while handling ${request.optString(\"method\")}", error)
+            Log.e("MenuFiguresPush", "Firebase task timed out while handling " + request.optString("method"), error)
             resultError("Firebase push setup is taking too long. Check internet access, Google Play services, and try Enable alerts again.")
         } catch (error: SecurityException) {
             resultError("Allow Nearby devices or notification permission in Android settings, then try again.")
