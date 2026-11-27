@@ -53,7 +53,10 @@ class MainActivity : Activity() {
     }
 
     private val spp = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-    private val bridgeExecutor = Executors.newSingleThreadExecutor()
+    // Keep slow Firebase Tasks.await calls off the printer queue.
+    // A pending push token must never delay paired-printer discovery, connection, or printing.
+    private val printerExecutor = Executors.newSingleThreadExecutor()
+    private val pushExecutor = Executors.newSingleThreadExecutor()
     private lateinit var webView: WebView
     private var printerSocket: BluetoothSocket? = null
     private var bridgeReady = false
@@ -245,8 +248,16 @@ class MainActivity : Activity() {
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
 
             val payload = message.data
-            bridgeExecutor.execute {
+            val method = runCatching { JSONObject(payload).optString("method") }.getOrDefault("")
+            val executor = if (method in setOf("getPushToken", "deletePushToken", "subscribeToTopic", "unsubscribeFromTopic")) {
+                pushExecutor
+            } else {
+                printerExecutor
+            }
+            executor.execute {
+                Log.d("MenuFiguresBridge", "Handling native bridge request: $method")
                 val response = handleBridgeMessage(payload)
+                Log.d("MenuFiguresBridge", "Completed native bridge request: $method")
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         runCatching { replyProxy.postMessage(response) }
@@ -487,7 +498,8 @@ class MainActivity : Activity() {
             webView.destroy()
         }
         disconnectPrinter()
-        bridgeExecutor.shutdownNow()
+        printerExecutor.shutdownNow()
+        pushExecutor.shutdownNow()
         super.onDestroy()
     }
 }
