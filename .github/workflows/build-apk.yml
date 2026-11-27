@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, feature/menufigures-push-notifications]
+    branches: [main, feature/menufigures-push-notifications, cleanup/menufigures-only]
 
 permissions:
   contents: write
